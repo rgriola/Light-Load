@@ -302,7 +302,6 @@
       const LOAD_MAX_LBS = 500;
       const LENGTH_MAX_FT = 100;
       const PIVOT_MIN_RATIO = 0.1; // Pivot must be at least 10% of the rail length, or the counterbalance becomes impractically heavy
-      const MAX_ANGLE_DEG = 45;
 
       let currentUnit = "imperial";
 
@@ -329,23 +328,6 @@
         return currentUnit === "imperial"
           ? LENGTH_MAX_FT
           : +(LENGTH_MAX_FT * FT_TO_M).toFixed(1);
-      }
-
-      // Keep the slider and the typed angle number in sync, then recalculate
-      function syncAngleFromSlider(value) {
-        document.getElementById("arm-angle").value = value;
-        calculate();
-      }
-
-      function syncAngleFromInput() {
-        const angleInput = document.getElementById("arm-angle");
-        const slider = document.getElementById("arm-angle-slider");
-        const clamped = Math.min(
-          Math.max(parseFloat(angleInput.value) || 0, 0),
-          MAX_ANGLE_DEG,
-        );
-        slider.value = clamped;
-        calculate();
       }
 
       function toggleUnits() {
@@ -415,13 +397,10 @@
         const totalLength =
           parseFloat(document.getElementById("total-length").value) || 0;
         const d2 = parseFloat(pivotInput.value) || 0;
-        const angleDeg =
-          parseFloat(document.getElementById("arm-angle").value) || 0;
 
         const loadErrorDiv = document.getElementById("load-error");
         const lengthErrorDiv = document.getElementById("length-error");
         const pivotErrorDiv = document.getElementById("pivot-error");
-        const angleErrorDiv = document.getElementById("angle-error");
         const unitLabel = currentUnit === "imperial" ? "ft" : "m";
         const loadMax = getLoadMax();
         const lengthMax = getLengthMax();
@@ -434,11 +413,7 @@
         lengthErrorDiv.style.display =
           totalLength > lengthMax ? "block" : "none";
 
-        const angleOutOfRange = angleDeg < 0 || angleDeg > MAX_ANGLE_DEG;
-        angleErrorDiv.style.display = angleOutOfRange ? "block" : "none";
-
-        const showOutOfRange =
-          w1 > loadMax || totalLength > lengthMax || angleOutOfRange;
+        const showOutOfRange = w1 > loadMax || totalLength > lengthMax;
 
         // Validation: pivot cannot exceed/equal total length, and must be at least 10% of it
         // (any lower and the required counterbalance becomes impractically heavy)
@@ -467,32 +442,40 @@
         const d1 = totalLength - d2; // Distance from pivot to load
         const unitSuffix = currentUnit === "imperial" ? " lbs" : " kg";
 
-        // 1. Calculate total Beam Weight (the physical rail's weight doesn't change with angle)
+        // 1. Calculate Beam Weight
         const unitWeight = PIPE_SPECS[currentUnit][railType];
         const wBeam = totalLength * unitWeight;
 
-        // 2. Arm angle: the load side of the rail rakes up to angleDeg from horizontal while the
-        // counterweight side (sandbag end) stays level/plumb. Gravity's torque on any mass only
-        // depends on its HORIZONTAL distance from the pivot, so raising the load side shrinks its
-        // horizontal reach (and that segment's weight) by cos(angle), reducing the counterbalance
-        // needed. The counterweight side is unaffected since it stays level.
-        const angleRad = (angleDeg * Math.PI) / 180;
-        const cosAngle = Math.cos(angleRad);
+        // 2. Find Beam's Center of Gravity relative to pivot
+        // Geometric center is at totalLength / 2
+        // Distance from pivot to geometric center:
+        const beamCenterFromNonLoadEnd = totalLength / 2;
+        const dBeam = beamCenterFromNonLoadEnd - d2;
 
-        const wBeamLoadSide = d1 * unitWeight; // Rail segment from pivot to load end
-        const wBeamCounterSide = d2 * unitWeight; // Rail segment from pivot to counterweight end
+        // Note: If dBeam is positive, the beam's center of gravity is on the LOAD side.
+        // If dBeam is negative, it's on the COUNTERBALANCE side.
+        //
+        // This is a pure gravity-balance (frictionless pivot) model: for a single straight rigid
+        // rail, tilting the whole beam by any angle scales every term's horizontal lever arm by the
+        // same cos(angle) factor, which cancels out of the balance equation entirely. So the
+        // required counterweight is the same at any rake angle — there is intentionally no angle
+        // input here, since adding one would either do nothing or (if modeled incorrectly) produce
+        // an unsafe, artificially low number that relies on the pivot clamp's friction instead of
+        // true gravity balance.
 
-        // 3. Principle of Moments: counterweight-side torque = load-side torque
-        // W2 * d2 + wBeamCounterSide * (d2 / 2) = [w1 * d1 + wBeamLoadSide * (d1 / 2)] * cos(angle)
-        const loadSideTorque = (w1 * d1 + wBeamLoadSide * (d1 / 2)) * cosAngle;
-        const counterSideBeamTorque = wBeamCounterSide * (d2 / 2);
+        // 3. Principle of Moments Equation:
+        // (W2 * d2) + (Wbeam * dBeam if on W2 side) = (W1 * d1) + (Wbeam * dBeam if on W1 side)
+        // Shifting variables to solve for W2:
+        // W2 * d2 = (W1 * d1) + (Wbeam * dBeam)
+        const loadTorque = w1 * d1;
+        const beamTorque = wBeam * dBeam;
 
-        let w2 = (loadSideTorque - counterSideBeamTorque) / d2;
+        let w2 = (loadTorque + beamTorque) / d2;
 
         // Ensure counterweight cannot be negative
         if (w2 < 0) w2 = 0;
 
-        // 4. Calculate total downward load on the stand (actual weight is unaffected by angle)
+        // 4. Calculate total downward load on the stand
         const totalLoadOnStand = w1 + w2 + wBeam;
 
         // Display results
