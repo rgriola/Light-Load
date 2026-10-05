@@ -1,0 +1,1 @@
+Can we add a support base to the calculation. This is the support the pivot point would be attached to. this base articulates vertically from 5' to 15'. I am interested to find the ideal size of the base.
